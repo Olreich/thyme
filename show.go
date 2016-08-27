@@ -4,9 +4,12 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"strconv"
 	"text/template"
 	"time"
 )
+
+const maxNumberOfBars = 30
 
 // Stats renders an HTML page with charts using stream as its data
 // source. Currently, it renders the following charts:
@@ -35,17 +38,18 @@ type AggTime struct {
 
 // NewAggTime returns a new AggTime created from a Stream.
 func NewAggTime(stream *Stream, labelFunc func(*Window) string) *AggTime {
-	active := NewBarChart("Active", "App", "Samples", "Time (multiplied by number of windows) application was active")
-	visible := NewBarChart("Visible", "App", "Samples", "Time (multiplied by number of windows) application was visible")
-	all := NewBarChart("All", "App", "Samples", "Time (multiplied by number of windows) application was open")
+	n := strconv.Itoa(maxNumberOfBars)
+	active := NewBarChart("Active", "App", "Samples", "Top "+n+" active applications by time (multiplied by window count)")
+	visible := NewBarChart("Visible", "App", "Samples", "Top "+n+" visible applications by time (multiplied by window count)")
+	all := NewBarChart("All", "App", "Samples", "Top "+n+" open applications by time (multiplied by window count)")
 	for _, snap := range stream.Snapshots {
 		windows := make(map[int64]*Window)
 		for _, win := range snap.Windows {
 			windows[win.ID] = win
 		}
 
-		if activeWin, ok := windows[snap.Active]; ok {
-			active.Plus(labelFunc(activeWin), 1)
+		if win := windows[snap.Active]; win != nil {
+			active.Plus(labelFunc(windows[snap.Active]), 1)
 		}
 		for _, v := range snap.Visible {
 			visible.Plus(labelFunc(windows[v]), 1)
@@ -83,7 +87,7 @@ func (c *BarChart) Plus(label string, n int) {
 	c.Series[label] += n
 }
 
-// OrderedBars returns a list of bars in the bar chart ordered by
+// OrderedBars returns a list of the top $maxNumberOfBars bars in the bar chart ordered by
 // decreasing count.
 func (c *BarChart) OrderedBars() []Bar {
 	var bars []Bar
@@ -92,7 +96,11 @@ func (c *BarChart) OrderedBars() []Bar {
 	}
 	s := sortBars{bars}
 	sort.Sort(s)
-	return s.bars
+	numberOfBars := maxNumberOfBars
+	if numberOfBars > len(s.bars) {
+		numberOfBars = len(s.bars)
+	}
+	return s.bars[:numberOfBars]
 }
 
 type sortBars struct {
@@ -153,6 +161,8 @@ func NewTimeline(stream *Stream, labelFunc func(*Window) string) *Timeline {
 					active = append(active, newRange)
 					lastActive = newRange
 				}
+			} else {
+				lastActive = nil
 			}
 		}
 
@@ -161,8 +171,10 @@ func NewTimeline(stream *Stream, labelFunc func(*Window) string) *Timeline {
 		}
 		nextVisible := make(map[string]*Range)
 		for _, v := range snap.Visible {
-			win := windows[v]
-			winLabel := labelFunc(win)
+			var winLabel string
+			if win := windows[v]; win != nil {
+				winLabel = labelFunc(win)
+			}
 			if existRng, exists := lastVisible[winLabel]; !exists {
 				newRange := &Range{Label: winLabel, Start: snap.Time, End: snap.Time}
 				nextVisible[winLabel] = newRange
@@ -300,7 +312,8 @@ var statsTmpl = template.Must(template.New("").Funcs(map[string]interface{}{
         vAxis: {
           title: '{{$chart.XLabel}}'
         },
-        bars: 'horizontal'
+        bars: 'horizontal',
+        height: 600
       };
       var material = new google.charts.Bar(document.getElementById('bar_chart_{{$chart.ID}}'));
       material.draw(data, options);
@@ -383,6 +396,9 @@ var statsTmpl = template.Must(template.New("").Funcs(map[string]interface{}{
 // window, w. It does so in best effort fashion. If the application
 // can't be determined, it returns the the name of the window.
 func appID(w *Window) string {
+	if w == nil {
+		return "(nil)"
+	}
 	if w.Info().App != "" {
 		return w.Info().App
 	}

@@ -56,7 +56,7 @@ func getWindowTitle(window uintptr) string {
 // getWindowID returns the process (thread) id that created the window. Multiple windows can share
 // the same process id.
 func getWindowID(window uintptr) int64 {
-	id, _, _ := procGetWindowThreadProcessId.Call(window)
+	id, _, _ := procGetWindowThreadProcessId.Call(window, 0)
 	return int64(id)
 }
 
@@ -93,6 +93,12 @@ func (t *WindowsTracker) Snap() (snap *Snapshot, err error) {
 		if b != 0 {
 			currentTitle := getWindowTitle(uintptr(hwnd))
 			currentId := getWindowID(uintptr(hwnd))
+			// Skip windows that are in a process where we already have a visible window
+			for _, visibleId := range visible {
+				if currentId == visibleId {
+					return 1
+				}
+			}
 			if !windowsIgnore(currentTitle) {
 				if activeTitle == currentTitle {
 					active = currentId
